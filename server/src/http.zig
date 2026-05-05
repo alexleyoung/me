@@ -7,14 +7,32 @@ pub const ParseError = error{
     HeaderOverflow,
 };
 
-pub const MAX_HEADERS = 64;
-
 pub const Request = struct {
     method: Method,
-    uri: []const u8,
-    version: []const u8,
+    uri: Slice,
+    version: Slice,
+    headers: Headers,
 
-    headers: []Header,
+    pub const Headers = struct {
+        source: Slice,
+
+        pub fn iterate(headers: Headers, buffer: []const u8) Iterator {
+            return .{ .remaining = headers.source.get(buffer) };
+        }
+
+        pub const Iterator = struct {
+            remaining: []const u8,
+
+            pub fn next(iter: *Iterator) ?Header {
+                const name, iter.remaining = std.mem.cutScalar(u8, iter.remaining, ':') orelse return null;
+                const value, iter.remaining = std.mem.cut(u8, iter.remaining, "\r\n") orelse .{ iter.remaining, "" };
+                return .{
+                    .name = name,
+                    .value = value,
+                };
+            }
+        };
+    };
 
     // body: ?[]u8,
 };
@@ -39,47 +57,19 @@ pub const Method = enum {
     }
 };
 
-const BumpBuffer = struct {
-    buf: []u8,
-    used: usize,
-
-    fn init(buf: []u8) BumpBuffer {
-        return .{
-            .buf = buf,
-            .used = 0,
-        };
-    }
-
-    fn dupe(self: *BumpBuffer, src: []const u8) ![]const u8 {
-        if (src.len > self.buf.len - self.used) return error.ScratchOverflow;
-        const dst = self.buf[self.used..][0..src.len];
-        @memcpy(dst, src);
-        self.used += src.len;
-        return dst;
-    }
-};
-
-pub fn readRequest(reader: *std.Io.Reader, h_buf: *[MAX_HEADERS]Header, s_buf: []u8) !Request {
-    // for request line strings + header kv pairs
-    var b_buf = BumpBuffer.init(s_buf);
-
+pub fn readRequest(reader: *std.Io.Reader) !Request {
     // parse req line
-    const req_line = try nextLine(reader) orelse "";
-    if (req_line.len == 0) return ParseError.EmptyRequestLine;
+    const method_slice, const uri, const version = try readLineSplitScalar(reader, 3, ' ') orelse return error.InvalidRequestLine;
+    const method = try Method.parse(method_slice.get(reader.buffer));
 
-    var line_parts = std.mem.splitScalar(u8, req_line, ' ');
-    const method = try Method.parse(line_parts.next() orelse "");
-    const uri = try b_buf.dupe(line_parts.next() orelse return ParseError.InvalidRequestLine);
-    const version = try b_buf.dupe(line_parts.next() orelse return ParseError.InvalidRequestLine);
-
-    // parse headers
-    var i: usize = 0;
-    while (try nextLine(reader)) |line| : (i += 1) {
-        if (i >= MAX_HEADERS) return ParseError.HeaderOverflow;
-        var header_parts = std.mem.splitScalar(u8, line, ':');
-
-        h_buf[i] = .{ .name = try b_buf.dupe(header_parts.first()), .value = try b_buf.dupe(std.mem.trim(u8, header_parts.rest(), &[_]u8{ ' ', '\t' })) };
+    // parse general headers
+    const headers_start = reader.seek;
+    while (try readLineSplitScalar(reader, 2, ':')) |header| {
+        const key, const value = header;
+        _ = key;
+        _ = value;
     }
+    const headers_end = reader.seek;
 
     // parse body
     // TODO
@@ -88,12 +78,56 @@ pub fn readRequest(reader: *std.Io.Reader, h_buf: *[MAX_HEADERS]Header, s_buf: [
         .method = method,
         .uri = uri,
         .version = version,
-        .headers = h_buf[0..i],
+        .headers = .{
+            .source = .{
+                .start = headers_start,
+                .len = headers_end - headers_start,
+            },
+        },
     };
 }
 
-fn nextLine(reader: *std.Io.Reader) !?[]const u8 {
+/// Absolute indexes into reader.buffer.
+/// We use indexes instead of pointers because some readers may reallocate the
+/// buffer (e.g., std.Io.Reader.Allocating).
+const Slice = struct {
+    start: usize,
+    len: usize,
+
+    pub fn get(slice: Slice, buffer: []const u8) []const u8 {
+        return buffer[slice.start..][0..slice.len];
+    }
+};
+
+fn readLine(reader: *std.Io.Reader) !?Slice {
+    const start = reader.seek;
     const line = try reader.takeDelimiter('\n') orelse return null;
-    const trimmed = std.mem.trimEnd(u8, line, &[_]u8{'\r'});
-    return if (trimmed.len != 0) trimmed else null;
+    const trimmed = std.mem.trimEnd(u8, line, "\r");
+    return if (trimmed.len != 0) .{
+        .start = start,
+        .len = trimmed.len,
+    } else null;
+}
+
+fn readLineSplitScalar(reader: *std.Io.Reader, comptime n: usize, delimiter: u8) !?[n]Slice {
+    std.debug.assert(n > 0);
+    const line = try readLine(reader) orelse return null;
+    var slices: [n]Slice = undefined;
+    var index = line.start;
+    for (&slices, 0..) |*slice, i| {
+        if (i == n - 1) {
+            slice.* = .{
+                .start = index,
+                .len = (line.start + line.len) - index,
+            };
+        } else {
+            const delimiter_index = std.mem.findScalarPos(u8, reader.buffer, index, delimiter) orelse return null;
+            slice.* = .{
+                .start = index,
+                .len = delimiter_index - index,
+            };
+            index = delimiter_index + 1;
+        }
+    }
+    return slices;
 }

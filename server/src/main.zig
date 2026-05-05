@@ -11,21 +11,22 @@ pub fn main(init: std.process.Init) !void {
 
     const srv = try server.Server.init(io, "127.0.0.1", 7878);
     var listener = try srv.listen();
+    defer listener.deinit(io);
 
     while (true) {
         const conn = try listener.accept(io);
         defer conn.close(io);
 
-        var reader_buf: [1024]u8 = undefined;
+        var reader_buf: [8192]u8 = undefined;
         var reader = conn.reader(io, &reader_buf);
+        defer reader.interface.tossBuffered();
 
-        var header_buf: [http.MAX_HEADERS]http.Header = undefined;
-        var scratch_buf: [8192]u8 = undefined;
-        const req = http.readRequest(&reader.interface, &header_buf, &scratch_buf) catch continue;
+        const req = http.readRequest(&reader.interface) catch continue;
 
-        std.debug.print("{s} {s} {s}\n", .{ @tagName(req.method), req.uri, req.version });
-        for (req.headers) |h| {
-            std.debug.print("  {s}: {s}\n", .{ h.name, h.value });
+        std.log.debug("{t} {s} {s}", .{ req.method, req.uri.get(&reader_buf), req.version.get(&reader_buf) });
+        var headers_iter = req.headers.iterate(&reader_buf);
+        while (headers_iter.next()) |h| {
+            std.log.debug("  {s}:{s}", .{ h.name, h.value });
         }
     }
 }
