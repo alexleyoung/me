@@ -23,6 +23,9 @@ pub fn main(init: std.process.Init) !void {
         var scratch_buf: [8192]u8 = undefined;
         const req = http.readRequest(&reader.interface, &header_buf, &scratch_buf) catch continue;
 
-        std.debug.print("{s} {s} {s}\n{s}: {s}\n", .{ @tagName(req.method), req.uri, req.version, req.headers[0].name, req.headers[0].value });
+        std.debug.print("{s} {s} {s}\n", .{ @tagName(req.method), req.uri, req.version });
+        for (req.headers) |h| {
+            std.debug.print("  {s}: {s}\n", .{ h.name, h.value });
+        }
     }
 }

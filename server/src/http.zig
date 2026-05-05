@@ -17,10 +17,6 @@ pub const Request = struct {
     headers: []Header,
 
     // body: ?[]u8,
-
-    // pub fn toString(self: Request) []u8 {
-    //     todo
-    // }
 };
 
 pub const Header = struct {
