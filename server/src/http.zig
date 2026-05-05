@@ -1,6 +1,8 @@
 const std = @import("std");
 
 pub const ParseError = error{
+    EmptyRequestLine,
+    InvalidMethod,
     InvalidRequestLine,
     HeaderOverflow,
 };
@@ -36,8 +38,8 @@ pub const Method = enum {
     DELETE,
     PATCH,
 
-    pub fn parse(str: ?[]const u8) ?Method {
-        return std.meta.stringToEnum(Method, str orelse "");
+    pub fn parse(str: []const u8) !Method {
+        return std.meta.stringToEnum(Method, str) orelse return ParseError.InvalidRequestLine;
     }
 };
 
@@ -66,8 +68,11 @@ pub fn readRequest(reader: *std.Io.Reader, h_buf: *[MAX_HEADERS]Header, s_buf: [
     var b_buf = BumpBuffer.init(s_buf);
 
     // parse req line
-    var line_parts = std.mem.splitScalar(u8, try nextLine(reader) orelse "", ' ');
-    const method = Method.parse(line_parts.next()) orelse return ParseError.InvalidRequestLine;
+    const req_line = try nextLine(reader) orelse "";
+    if (req_line.len == 0) return ParseError.EmptyRequestLine;
+
+    var line_parts = std.mem.splitScalar(u8, req_line, ' ');
+    const method = try Method.parse(line_parts.next() orelse "");
     const uri = try b_buf.dupe(line_parts.next() orelse return ParseError.InvalidRequestLine);
     const version = try b_buf.dupe(line_parts.next() orelse return ParseError.InvalidRequestLine);
 
@@ -92,7 +97,7 @@ pub fn readRequest(reader: *std.Io.Reader, h_buf: *[MAX_HEADERS]Header, s_buf: [
 }
 
 fn nextLine(reader: *std.Io.Reader) !?[]const u8 {
-    const line = try reader.takeDelimiterExclusive('\n');
-    const trimmed = std.mem.trim(u8, line, &[_]u8{ '\r', '\n' });
+    const line = try reader.takeDelimiter('\n') orelse return null;
+    const trimmed = std.mem.trimEnd(u8, line, &[_]u8{'\r'});
     return if (trimmed.len != 0) trimmed else null;
 }
