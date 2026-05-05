@@ -19,7 +19,7 @@ pub const Server = struct {
 
     /// Return TCP stream listener on [self.addr]
     pub fn listen(self: Server) !std.Io.net.Server {
-        std.debug.print("Starting server on {s}:{d}", .{ self.host, self.port });
+        std.debug.print("Starting server on {s}:{d}\n", .{ self.host, self.port });
         return self.addr.listen(self.io, .{ .mode = .stream, .protocol = .tcp });
     }
 };
