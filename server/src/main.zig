@@ -22,11 +22,24 @@ pub fn main(init: std.process.Init) !void {
         defer reader.interface.tossBuffered();
 
         const req = http.readRequest(&reader.interface) catch continue;
+        switch (req.method) {
+            .GET => {
+                var index = try std.Io.Dir.cwd().openFile(io, "index.html", .{});
+                defer index.close(io);
+                var html_reader_buf: [1024]u8 = undefined;
+                var html_reader = index.reader(io, &html_reader_buf);
 
-        std.log.debug("{t} {s} {s}", .{ req.method, req.uri.get(&reader_buf), req.version.get(&reader_buf) });
-        var headers_iter = req.headers.iterate(&reader_buf);
-        while (headers_iter.next()) |h| {
-            std.log.debug("  {s}:{s}", .{ h.name, h.value });
+                var writer_buf: [8192]u8 = undefined;
+                var writer = conn.writer(io, &writer_buf);
+                try writer.interface.print("{s} 200 OK\r\nContent-Length: {d}\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n", .{
+                    req.version.get(&reader_buf),
+                    try index.length(io),
+                });
+
+                _ = try html_reader.interface.streamRemaining(&writer.interface);
+                try writer.interface.flush();
+            },
+            else => {},
         }
     }
 }
