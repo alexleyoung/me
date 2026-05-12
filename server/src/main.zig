@@ -5,9 +5,30 @@ const server = @import("server");
 
 // should this be its own module thinking emoji
 const http = @import("http.zig");
+const handlers = @import("handlers.zig");
+
+pub const Context = struct {
+    io: std.Io,
+    pages: Pages,
+
+    pub const Pages = struct {
+        index: []const u8,
+        err: []const u8,
+    };
+
+    pub fn init(io: std.Io, alloc: std.mem.Allocator) !Context {
+        const index = try std.Io.Dir.cwd().readFileAlloc(io, "static/index.html", alloc, .unlimited);
+        const err = try std.Io.Dir.cwd().readFileAlloc(io, "static/err.html", alloc, .unlimited);
+
+        const pages = Pages{ .index = index, .err = err };
+
+        return Context{ .io = io, .pages = pages };
+    }
+};
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
+    const gpa = init.gpa;
 
     const srv = try server.Server.init(io, "127.0.0.1", 7878);
     var listener = try srv.listen();
@@ -15,31 +36,18 @@ pub fn main(init: std.process.Init) !void {
 
     while (true) {
         const conn = try listener.accept(io);
-        defer conn.close(io);
-
-        var reader_buf: [8192]u8 = undefined;
-        var reader = conn.reader(io, &reader_buf);
-        defer reader.interface.tossBuffered();
-
-        const req = http.readRequest(&reader.interface) catch continue;
-        switch (req.method) {
-            .GET => {
-                var index = try std.Io.Dir.cwd().openFile(io, "index.html", .{});
-                defer index.close(io);
-                var html_reader_buf: [1024]u8 = undefined;
-                var html_reader = index.reader(io, &html_reader_buf);
-
-                var writer_buf: [8192]u8 = undefined;
-                var writer = conn.writer(io, &writer_buf);
-                try writer.interface.print("{s} 200 OK\r\nContent-Length: {d}\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n", .{
-                    req.version.get(&reader_buf),
-                    try index.length(io),
-                });
-
-                _ = try html_reader.interface.streamRemaining(&writer.interface);
-                try writer.interface.flush();
-            },
-            else => {},
-        }
+        try handle_conn(io, conn);
     }
+}
+
+fn handle_conn(io: std.Io, conn: std.Io.net.Stream) !void {
+    defer conn.close(io);
+
+    var reader_buf: [8192]u8 = undefined;
+    var reader = conn.reader(io, &reader_buf);
+    defer reader.interface.tossBuffered();
+
+    // TODO: actually handle this error
+    const req = try http.readRequest(&reader.interface);
+    try handlers.handle_req(req);
 }
