@@ -38,5 +38,5 @@ pub fn handleConn(ctx: *const Context, conn: std.Io.net.Stream) !void {
     // TODO: actually handle this error(s)
     const req = try http.readRequest(&reader.interface);
     std.debug.print("handling {} request\n", .{req.method});
-    try handlers.handle(ctx, conn, req);
+    try handlers.handle(ctx, conn, req, &reader_buf);
 }
