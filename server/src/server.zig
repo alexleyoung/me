@@ -3,40 +3,44 @@ const std = @import("std");
 const http = @import("http.zig");
 const handlers = @import("handlers.zig");
 
-pub const Context = struct {
-    io: std.Io,
-    pages: Pages,
+/// My custom http server struct. Express-like API which lets you declare
+/// routes and pass callbacks to be run on that route.
+pub const Server = struct {
+    alloc: std.mem.Allocator,
+    routes: RouteMap,
 
-    pub const Pages = struct {
-        index: []const u8,
-        err: []const u8,
+    pub const RouteMap = std.HashMap(Route, Handler, RouteContext, std.hash_map.default_max_load_percentage);
+
+    pub const Route = struct {
+        uri: []const u8,
+        method: http.Method,
     };
 
-    pub fn init(io: std.Io, alloc: std.mem.Allocator) !Context {
-        const index = try std.Io.Dir.cwd().readFileAlloc(io, "static/index.html", alloc, .unlimited);
-        const err = try std.Io.Dir.cwd().readFileAlloc(io, "static/err.html", alloc, .unlimited);
+    pub const RouteContext = struct {
+        pub fn hash(_: RouteContext, r: Route) u64 {
+            // wyhash is default zig (and others) hash algorithm
+            var h = std.hash.Wyhash.init(0);
+            h.update(r.uri);
+            h.update(std.mem.asBytes(&r.method));
+            return h.final();
+        }
 
-        return .{
-            .io = io,
-            .pages = .{ .index = index, .err = err },
-        };
+        pub fn eql(_: RouteContext, a: Route, b: Route) bool {
+            return a.method == b.method and std.mem.eql(u8, a.uri, b.uri);
+        }
+    };
+
+    pub const Handler = *const fn (conn: std.Io.net.Stream) anyerror!void;
+
+    pub fn init(alloc: std.mem.Allocator) !Server {
+        return .{ .routes = RouteMap.init(alloc) };
     }
 
-    pub fn deinit(self: *Context, alloc: std.mem.Allocator) void {
-        alloc.free(self.pages.index);
-        alloc.free(self.pages.err);
+    pub fn deinit(self: Server) void {
+        self.routes.deinit();
+    }
+
+    pub fn get(self: *Server, uri: []u8, handler: Handler) !void {
+        try self.routes.put(.{ .uri = uri, .method = .GET }, handler);
     }
 };
-
-pub fn handleConn(ctx: *const Context, conn: std.Io.net.Stream) !void {
-    defer conn.close(ctx.io);
-
-    var reader_buf: [8192]u8 = undefined;
-    var reader = conn.reader(ctx.io, &reader_buf);
-    defer reader.interface.tossBuffered();
-
-    // TODO: actually handle this error(s)
-    const req = try http.readRequest(&reader.interface);
-    std.debug.print("handling {} request\n", .{req.method});
-    try handlers.handle(ctx, conn, req, &reader_buf);
-}

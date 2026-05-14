@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const server = @import("server.zig");
+const server = @import("server");
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;

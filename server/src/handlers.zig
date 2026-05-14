@@ -4,15 +4,14 @@ const http = @import("http.zig");
 const server = @import("server.zig");
 
 pub fn handle(ctx: *const server.Context, conn: std.Io.net.Stream, req: http.Request, req_buf: []const u8) !void {
+    const uri = req.uri.get(req_buf);
     switch (req.method) {
-        .GET => try handleGet(ctx, conn, req, req_buf),
+        .GET => try handleGet(ctx, conn, uri),
         else => {},
     }
 }
 
-fn handleGet(ctx: *const server.Context, conn: std.Io.net.Stream, req: http.Request, req_buf: []const u8) !void {
-    const uri = req.uri.get(req_buf);
-
+fn handleGet(ctx: *const server.Context, conn: std.Io.net.Stream, uri: []const u8) !void {
     var writer_buf: [8192]u8 = undefined;
     var writer = conn.writer(ctx.io, &writer_buf);
 
@@ -23,13 +22,13 @@ fn handleGet(ctx: *const server.Context, conn: std.Io.net.Stream, req: http.Requ
             ctx.pages.index.len,
         });
         try writer.interface.writeAll(ctx.pages.index);
-        try writer.interface.flush();
     } else {
         try writer.interface.print("{s} 404 ERROR\r\nContent-Length: {d}\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n", .{
             "HTTP/1.1",
             ctx.pages.err.len,
         });
         try writer.interface.writeAll(ctx.pages.err);
-        try writer.interface.flush();
     }
+
+    try writer.interface.flush();
 }
