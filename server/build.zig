@@ -21,12 +21,21 @@ pub fn build(b: *std.Build) void {
     // target and optimize options) will be listed when running `zig build --help`
     // in this directory.
 
+    const lib = b.addModule("pington", .{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const exe = b.addExecutable(.{
-        .name = "server",
+        .name = "me",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
+            .root_source_file = b.path("mine/main.zig"),
             .target = target,
             .optimize = optimize,
+            .imports = &.{
+                .{ .name = "pington", .module = lib },
+            },
         }),
     });
 
@@ -62,13 +71,18 @@ pub fn build(b: *std.Build) void {
         run_cmd.addArgs(args);
     }
 
+    const lib_tests = b.addTest(.{
+        .root_module = lib,
+    });
+    const run_lib_tests = b.addRunArtifact(lib_tests);
+
     const exe_tests = b.addTest(.{
         .root_module = exe.root_module,
     });
-
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
     const test_step = b.step("test", "Run tests");
+    test_step.dependOn(&run_lib_tests.step);
     test_step.dependOn(&run_exe_tests.step);
 
     // Just like flags, top level steps are also listed in the `--help` menu.
