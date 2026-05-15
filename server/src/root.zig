@@ -5,11 +5,21 @@ const http = @import("http.zig");
 /// My custom http server struct. Express-like API which lets you declare
 /// routes and pass callbacks to be run on that route.
 pub const Server = struct {
+    io: std.Io,
     alloc: std.mem.Allocator,
-    routes: RouteMap,
 
-    pub fn init(alloc: std.mem.Allocator) !Server {
-        return .{ .alloc = alloc, .routes = RouteMap.init(alloc) };
+    routes: RouteMap,
+    middleware: std.ArrayList(Handler),
+    notFoundHandler: ?Handler,
+
+    pub fn init(io: std.Io, alloc: std.mem.Allocator) !Server {
+        return .{
+            .io = io,
+            .alloc = alloc,
+            .routes = RouteMap.init(alloc),
+            .middleware = try std.ArrayList(Handler).initCapacity(alloc, 4),
+            .notFoundHandler = null,
+        };
     }
 
     pub fn deinit(self: *Server) void {
@@ -35,7 +45,7 @@ pub const Server = struct {
         method: http.Method,
     };
 
-    pub const Handler = *const fn (conn: std.Io.net.Stream) anyerror!void;
+    pub const Handler = *const fn (req: http.Request, res: http.Response) anyerror!void;
 
     pub const RouteContext = struct {
         pub fn hash(_: RouteContext, r: Route) u64 {
@@ -57,7 +67,15 @@ pub const Server = struct {
 };
 
 fn handleConn(server: Server, conn: std.Io.net.Stream) !void {
-    // TODO
-    _ = server;
-    _ = conn;
+    var r_buf: [8192]u8 = undefined;
+    var reader = conn.reader(server.io, &r_buf).interface;
+
+    const req = try http.readRequest(&reader);
+
+    const handler = server.routes.get(.{ .uri = req.uri.get(&r_buf), .method = req.method });
+    if (handler == null) {
+        return;
+    }
 }
+
+fn defaultNotFoundHandler() !void {}

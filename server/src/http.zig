@@ -37,6 +37,8 @@ pub const Request = struct {
     // body: ?[]u8,
 };
 
+pub const Response = struct {};
+
 pub const Header = struct {
     name: []const u8,
     value: []const u8,
