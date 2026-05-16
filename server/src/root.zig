@@ -2,6 +2,9 @@ const std = @import("std");
 
 const http = @import("http.zig");
 
+pub const Request = http.Request;
+pub const Response = http.Response;
+
 /// My custom http server struct. Express-like API which lets you declare
 /// routes and pass callbacks to be run on that route.
 pub const Server = struct {
@@ -24,6 +27,7 @@ pub const Server = struct {
 
     pub fn deinit(self: *Server) void {
         self.routes.deinit();
+        self.middleware.deinit(self.alloc);
     }
 
     /// Start the http server loop
@@ -45,7 +49,7 @@ pub const Server = struct {
         method: http.Method,
     };
 
-    pub const Handler = *const fn (req: http.Request, res: http.Response) anyerror!void;
+    pub const Handler = *const fn (server: Server, req: http.Request, res: http.Response) anyerror!void;
 
     pub const RouteContext = struct {
         pub fn hash(_: RouteContext, r: Route) u64 {
@@ -61,28 +65,29 @@ pub const Server = struct {
         }
     };
 
-    pub fn get(self: *Server, uri: []u8, handler: Handler) !void {
+    pub fn get(self: *Server, uri: []const u8, handler: Handler) !void {
         try self.routes.put(.{ .uri = uri, .method = .GET }, handler);
     }
 };
 
-fn handleConn(server: Server, conn: std.Io.net.Stream) !void {
+fn defaultNotFoundHandler(_: Server, _: http.Request, res: http.Response) !void {
+    try res.status(404);
+    try res.send("");
+}
+
+fn handleConn(srv: Server, conn: std.Io.net.Stream) !void {
     var r_buf: [8192]u8 = undefined;
-    var reader = conn.reader(server.io, &r_buf);
+    var reader = conn.reader(srv.io, &r_buf);
     const req = try http.readRequest(&reader.interface);
 
     var w_buf: [1024]u8 = undefined;
-    var writer = conn.writer(server.io, &w_buf);
+    var writer = conn.writer(srv.io, &w_buf);
     const res = http.Response{ .writer = &writer.interface };
 
-    if (server.routes.get(.{ .uri = req.uri.get(&r_buf), .method = req.method })) |handler| {
-        try handler(req, res);
+    if (srv.routes.get(.{ .uri = req.uri.get(&r_buf), .method = req.method })) |handler| {
+        try handler(srv, req, res);
     } else {
-        try (server.notFoundHandler orelse defaultNotFoundHandler)(req, res);
+        try (srv.notFoundHandler orelse defaultNotFoundHandler)(srv, req, res);
     }
-}
-
-fn defaultNotFoundHandler(_: http.Request, res: http.Response) !void {
-    try res.status(404);
-    try res.send("");
+    try writer.interface.flush();
 }
