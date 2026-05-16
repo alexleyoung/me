@@ -37,7 +37,28 @@ pub const Request = struct {
     // body: ?[]u8,
 };
 
-pub const Response = struct {};
+/// Wrapper of a connection stream's writer.
+/// MUST call status, set, and send in that order, as
+/// these helpers append to the stream.
+pub const Response = struct {
+    writer: *std.Io.Writer,
+
+    /// Write the status line of the response
+    pub fn status(self: Response, code: u16) !void {
+        try self.writer.print("HTTP/1.1 {d} {s}\r\n", .{ code, statusMessage(code) });
+    }
+
+    /// Set header [k] with value [v]
+    pub fn set(self: Response, key: []const u8, val: []const u8) !void {
+        try self.writer.print("{s}: {s}\r\n", .{ key, val });
+    }
+
+    /// Write the body of the response with [data]
+    pub fn send(self: Response, data: []const u8) !void {
+        try self.writer.writeAll("\r\n");
+        try self.writer.writeAll(data);
+    }
+};
 
 pub const Header = struct {
     name: []const u8,
@@ -132,4 +153,11 @@ fn readLineSplitScalar(reader: *std.Io.Reader, comptime n: usize, delimiter: u8)
         }
     }
     return slices;
+}
+
+fn statusMessage(code: u16) []const u8 {
+    return switch (code) {
+        404 => "Not found",
+        else => "Unknown error",
+    };
 }

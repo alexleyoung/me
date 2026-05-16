@@ -69,13 +69,20 @@ pub const Server = struct {
 fn handleConn(server: Server, conn: std.Io.net.Stream) !void {
     var r_buf: [8192]u8 = undefined;
     var reader = conn.reader(server.io, &r_buf).interface;
-
     const req = try http.readRequest(&reader);
 
-    const handler = server.routes.get(.{ .uri = req.uri.get(&r_buf), .method = req.method });
-    if (handler == null) {
-        return;
+    var w_buf: [1024]u8 = undefined;
+    var writer = conn.writer(server.io, &w_buf).interface;
+    const res = http.Response{ .writer = &writer };
+
+    if (server.routes.get(.{ .uri = req.uri.get(&r_buf), .method = req.method })) |handler| {
+        try handler(req, res);
+    } else {
+        try (server.notFoundHandler orelse defaultNotFoundHandler)(req, res);
     }
 }
 
-fn defaultNotFoundHandler() !void {}
+fn defaultNotFoundHandler(_: http.Request, res: http.Response) !void {
+    try res.status(404);
+    try res.send("");
+}
