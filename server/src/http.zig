@@ -53,6 +53,10 @@ pub const Response = struct {
         try self.writer.print("{s}: {s}\r\n", .{ key, val });
     }
 
+    pub fn setInt(self: Response, key: []const u8, val: u64) !void {
+        try self.writer.print("{s}: {d}\r\n", .{ key, val });
+    }
+
     /// Write the body of the response with [data]
     pub fn send(self: Response, data: []const u8) !void {
         try self.writer.writeAll("\r\n");
@@ -157,6 +161,7 @@ fn readLineSplitScalar(reader: *std.Io.Reader, comptime n: usize, delimiter: u8)
 
 fn statusMessage(code: u16) []const u8 {
     return switch (code) {
+        200 => "OK",
         404 => "Not found",
         else => "Unknown error",
     };
