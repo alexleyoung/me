@@ -14,5 +14,5 @@ pub fn main(init: std.process.Init) !void {
 
     const port: u16 = 7878;
     std.debug.print("Listening on port {d}\n", .{port});
-    try srv.listen(init.io, port);
+    try srv.listen(port);
 }

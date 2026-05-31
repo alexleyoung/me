@@ -5,40 +5,49 @@ const http = @import("http.zig");
 pub const Request = http.Request;
 pub const Response = http.Response;
 
-/// My custom http server struct. Express-like API which lets you declare
-/// routes and pass callbacks to be run on that route.
 pub const Server = struct {
+    // must be threadsafe
     io: std.Io,
     alloc: std.mem.Allocator,
+    threads: std.Io.Threaded,
 
-    routes: RouteMap,
-    middleware: std.ArrayList(Handler),
+    listening: bool,
+
+    _routes: RouteMap,
+    _middleware: std.ArrayList(Handler),
     notFoundHandler: ?Handler,
 
     pub fn init(io: std.Io, alloc: std.mem.Allocator) !Server {
         return .{
             .io = io,
             .alloc = alloc,
-            .routes = RouteMap.init(alloc),
-            .middleware = try std.ArrayList(Handler).initCapacity(alloc, 4),
+            .threads = std.Io.Threaded.init(alloc, .{}),
+            .listening = false,
+            ._routes = RouteMap.init(alloc),
+            ._middleware = try std.ArrayList(Handler).initCapacity(alloc, 4),
             .notFoundHandler = null,
         };
     }
 
     pub fn deinit(self: *Server) void {
-        self.routes.deinit();
-        self.middleware.deinit(self.alloc);
+        self._routes.deinit();
+        self._middleware.deinit(self.alloc);
+        self.threads.deinit();
     }
 
     /// Start the http server loop
-    pub fn listen(self: Server, io: std.Io, port: u16) !void {
+    pub fn listen(self: *Server, port: u16) !void {
         const addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", port);
-        var listener = try addr.listen(io, .{ .mode = .stream, .protocol = .tcp });
-        defer listener.deinit(io);
+        var listener = try addr.listen(self.io, .{ .mode = .stream, .protocol = .tcp });
+        defer listener.deinit(self.io);
 
+        var group: std.Io.Group = .init;
+        defer group.await(self.threads.io()) catch {};
+
+        self.listening = true;
         while (true) {
-            const conn = try listener.accept(io);
-            try handleConn(self, conn);
+            const conn = try listener.accept(self.io);
+            try group.concurrent(self.threads.io(), handleConn, .{ self, conn });
         }
     }
 
@@ -49,7 +58,7 @@ pub const Server = struct {
         method: http.Method,
     };
 
-    pub const Handler = *const fn (server: Server, req: http.Request, res: http.Response) anyerror!void;
+    pub const Handler = *const fn (server: *Server, req: http.Request, res: http.Response) anyerror!void;
 
     pub const RouteContext = struct {
         pub fn hash(_: RouteContext, r: Route) u64 {
@@ -65,17 +74,30 @@ pub const Server = struct {
         }
     };
 
+    pub fn middleware(self: *Server, handler: Handler) !void {
+        std.debug.assert(!self.listening);
+        try self._middleware.append(self.alloc, handler);
+    }
+
     pub fn get(self: *Server, uri: []const u8, handler: Handler) !void {
-        try self.routes.put(.{ .uri = uri, .method = .GET }, handler);
+        std.debug.assert(!self.listening);
+        try self._routes.put(.{ .uri = uri, .method = .GET }, handler);
     }
 };
 
-fn defaultNotFoundHandler(_: Server, _: http.Request, res: http.Response) !void {
+fn defaultNotFoundHandler(_: *Server, _: http.Request, res: http.Response) !void {
     try res.status(404);
     try res.send("");
 }
 
-fn handleConn(srv: Server, conn: std.Io.net.Stream) !void {
+fn handleConn(srv: *Server, conn: std.Io.net.Stream) std.Io.Cancelable!void {
+    handleConnInner(srv, conn) catch |err| switch (err) {
+        error.Canceled => return error.Canceled,
+        else => std.log.err("conn handler: {s}", .{@errorName(err)}),
+    };
+}
+
+fn handleConnInner(srv: *Server, conn: std.Io.net.Stream) !void {
     var r_buf: [8192]u8 = undefined;
     var reader = conn.reader(srv.io, &r_buf);
     const req = try http.readRequest(&reader.interface);
@@ -84,7 +106,9 @@ fn handleConn(srv: Server, conn: std.Io.net.Stream) !void {
     var writer = conn.writer(srv.io, &w_buf);
     const res = http.Response{ .writer = &writer.interface };
 
-    if (srv.routes.get(.{ .uri = req.uri.get(&r_buf), .method = req.method })) |handler| {
+    // TODO: middleware here
+
+    if (srv._routes.get(.{ .uri = req.uri.get(&r_buf), .method = req.method })) |handler| {
         try handler(srv, req, res);
     } else {
         try (srv.notFoundHandler orelse defaultNotFoundHandler)(srv, req, res);
