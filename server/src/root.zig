@@ -87,6 +87,7 @@ pub const Server = struct {
 
 fn defaultNotFoundHandler(_: *Server, _: http.Request, res: http.Response) !void {
     try res.status(404);
+    try res.setInt("Content-Length", 0);
     try res.send("");
 }
 
